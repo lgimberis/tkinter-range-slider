@@ -108,7 +108,7 @@ class RangeSlider(Frame):
             self.user_moved_sliders_since_last_check = False
             self.__update_entry_bindings()
 
-    def change_display(self, value_display, inverse_display):
+    def change_display(self, value_display, inverse_display=None):
         """Update the function that returns the display text for a given 'value'.
 
         The single argument should be a function which accepts a single value
@@ -320,6 +320,10 @@ class RangeSlider(Frame):
             self.__entry_out_var, self.__head_out,
             self.__entry_in_var, self.__head_in, -1
         ))
+
+        state = 'enabled' if self.__inverse_display else 'disabled'
+        self.__entry_in['state'] = state
+        self.__entry_out['state'] = state
 
 if __name__ == "__main__":
     # Short demo with two sliders - one with numbers 0.0-1.0, the other with timestamps 0:00 - 51:05
