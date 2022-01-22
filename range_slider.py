@@ -9,7 +9,7 @@ from tkinter import ttk
 
 
 class RangeSlider(Frame):
-    """RangeSlider presents a double-headed slider defining 'in' and 'out', or '__value_min' and '__value_max'.
+    """RangeSlider presents a double-headed slider to the user.
 
     """
     LINE_COLOUR = "#476b6b"
@@ -20,15 +20,18 @@ class RangeSlider(Frame):
     HEAD_RADIUS_INNER = 5
     HEAD_LINE_WIDTH = 2
 
-    def __init__(self, master, value_min=0, value_max=1, width=400, height=40, value_display=lambda v: f"{v:0.2f}"):
+    def __init__(self, master, value_min=0, value_max=1, width=400, height=40,
+                 value_display=lambda v: f"{v:0.2f}", inverse_display=lambda s: float(s)):
         Frame.__init__(self, master, height=height, width=width)
         self.master = master
+        self.user_moved_sliders_since_last_check = False
 
         self.__value_min = value_min
         self.__value_max = value_max
         self.__width = width
         self.__height = height
         self.__value_display = value_display
+        self.__inverse_display = inverse_display
 
         # It is often necessary to translate the 'position', the x/y co-ordinates on the screen,
         # to and from the 'value', which the sliders are intended to represent.
@@ -51,11 +54,13 @@ class RangeSlider(Frame):
         self.__canvas.bind("<Motion>", self.__onclick)
         self.__canvas.bind("<B1-Motion>", self.__clicked_move)
 
-        # Labels for showing user selected values
-        self.__label_in = ttk.Label(self)
-        self.__label_in.grid(row=1, sticky=W)
-        self.__label_out = ttk.Label(self)
-        self.__label_out.grid(row=1, sticky=E)
+        # Entries for showing user selected values, or allowing user to specify their own
+        self.__entry_in_var = StringVar()
+        self.__entry_in = ttk.Entry(self, width=len(value_display(value_min)), textvariable=self.__entry_in_var)
+        self.__entry_in.grid(row=1, sticky=W)
+        self.__entry_out_var = StringVar()
+        self.__entry_out = ttk.Entry(self, width=len(value_display(value_max)), textvariable=self.__entry_out_var)
+        self.__entry_out.grid(row=1, sticky=E)
 
         # Slider bar and heads
         self.__canvas.create_line((self.__slider_x_start, self.__slider_y, self.__slider_x_end, self.__slider_y),
@@ -65,7 +70,7 @@ class RangeSlider(Frame):
 
         # Reset in and out sliders and labels
         self.change_min_max(value_min, value_max, force=True)
-        self.change_display(value_display)
+        self.change_display(value_display, inverse_display)
 
     def change_min_max(self, value_min, value_max, reset=True, force=False):
         """Update the minimum and maximum 'values', and adjust the slider heads if/as necessary.
@@ -100,7 +105,10 @@ class RangeSlider(Frame):
             self.__move_head(self.__head_in, self.__slider_x_start)
             self.__move_head(self.__head_out, self.__slider_x_end)
 
-    def change_display(self, value_display):
+            self.user_moved_sliders_since_last_check = False
+            self.__update_entry_bindings()
+
+    def change_display(self, value_display, inverse_display):
         """Update the function that returns the display text for a given 'value'.
 
         The single argument should be a function which accepts a single value
@@ -109,9 +117,22 @@ class RangeSlider(Frame):
         Example: """
 
         self.__value_display = value_display
-        self.__label_in["text"] = self.__value_display(self.__value_in)
-        self.__label_out["text"] = self.__value_display(self.__value_out)
-        self.update()
+        self.__inverse_display = inverse_display
+
+        if inverse_display:
+            if inverse_display(value_display(self.__value_min)) != self.__value_min or \
+                    inverse_display(value_display(self.__value_max)) != self.__value_max:
+                self.__inverse_display = None
+
+        label_in_text = self.__value_display(self.__value_in)
+        self.__entry_in_var.set(label_in_text)
+        self.__entry_in['width'] = max(self.__entry_in['width'], len(label_in_text))
+
+        label_out_text = self.__value_display(self.__value_out)
+        self.__entry_out_var.set(label_out_text)
+        self.__entry_out['width'] = max(self.__entry_out['width'], len(label_out_text))
+
+        self.__update_entry_bindings()
 
     @staticmethod
     def timestamp_display_builder(maximum_time_in_seconds=None):
@@ -120,7 +141,7 @@ class RangeSlider(Frame):
         Returns a valid display function that will convert values in seconds to appropriate timestamps
         with relevant formatting and zero-padding for an optionally given maximum time.
 
-        Example: my_range_slider.change_display(RangeSlider.timestamp_display(2000))
+        Example: my_range_slider.change_display(*RangeSlider.timestamp_display(2000))
         will generate labels of the form "##:##"
         """
         if not maximum_time_in_seconds or maximum_time_in_seconds > 3599:
@@ -136,13 +157,36 @@ class RangeSlider(Frame):
             minutes, seconds = divmod(remaining_seconds, 60)
             return timestamp_format(hours, minutes, seconds)
 
-        return f
+        def inverse(timestamp):
+            parts = timestamp.split(":")
+            if len(parts) == 3:
+                # Hours
+                seconds = int(parts[0]) * 3600
+            else:
+                seconds = 0
+
+            # Minutes and seconds
+            seconds += int(parts[-2]) * 60 + int(parts[-1])
+            return seconds
+
+        return f, inverse
 
     def get_in_and_out(self) -> tuple:
         """Obtain the values of the 'in' and 'out' marks.
 
         Returns (in, out) as a tuple."""
         return self.__value_in, self.__value_out
+
+    def __set_in_and_out(self, value_in, value_out) -> None:
+        self.__value_in = value_in
+        self.__value_out = value_out
+
+    def have_sliders_moved(self) -> bool:
+        """Whether the user has moved the sliders via slider or entry since the last time this function was called.
+        """
+        flag = self.user_moved_sliders_since_last_check
+        self.user_moved_sliders_since_last_check = False
+        return flag
 
     def __check_mouse_collision(self, x, y):
         """Check whether the mouse is clicked on either or both bar heads.
@@ -186,11 +230,11 @@ class RangeSlider(Frame):
             if self.__selected_head is self.__head_in:
                 centre_x = min(self.__value_to_pos(self.__value_out), centre_x)
                 bar_value = self.__value_in = self.__pos_to_value(centre_x)
-                self.__label_in.configure(text=self.__value_display(bar_value))
+                self.__entry_in_var.set(self.__value_display(bar_value))
             elif self.__selected_head is self.__head_out:
                 centre_x = max(self.__value_to_pos(self.__value_in), centre_x)
                 bar_value = self.__value_out = self.__pos_to_value(centre_x)
-                self.__label_out.configure(text=self.__value_display(bar_value))
+                self.__entry_out_var.set(self.__value_display(bar_value))
             else:
                 pos_out = self.__value_to_pos(self.__value_out)
                 if centre_x > pos_out:
@@ -200,6 +244,7 @@ class RangeSlider(Frame):
                     self.__selected_head = self.__head_in
 
             self.__move_head(self.__selected_head, centre_x)
+            self.user_moved_sliders_since_last_check = True
 
     def __add_head(self, value) -> tuple:
         """Create a 'head' of two circles at the given 'value'. Returns the IDs of both sub-elements in a tuple.
@@ -224,6 +269,57 @@ class RangeSlider(Frame):
 
         return outer, inner
 
+    def __update_entry_bindings(self):
+        """Update the Entry bindings with functions that allow the user the user to move the heads by entering values.
+
+        Only works if inverse_display is set. Should be called whenever the min/max values change.
+        """
+        def builder(this_var, this_head, other_var, other_head, parity):
+            def f(*args):
+                if self.__inverse_display:
+                    value_in, value_out = self.get_in_and_out()
+                    if parity == 1:
+                        this_value, other = value_in, value_out
+                    else:
+                        this_value, other = value_out, value_in
+                    proposed = self.__inverse_display(this_var.get())
+                    if proposed != this_value:
+                        # Value has changed
+                        self.user_moved_sliders_since_last_check = True
+                        this_value = min(max(self.__value_min, proposed), self.__value_max)
+                        this_var.set(self.__value_display(this_value))
+
+                        if this_value * parity > other * parity:
+                            # Suppose user enters value for 'out' less than current 'in'
+                            # Most intuitive behaviour would be to set 'in' at 'out'.
+                            other = this_value
+                            other_var.set(self.__value_display(other))
+                            self.__move_head(other_head, self.__value_to_pos(other))
+                        self.__move_head(this_head, self.__value_to_pos(this_value))
+
+                        if parity == 1:
+                            self.__set_in_and_out(this_value, other)
+                        else:
+                            self.__set_in_and_out(other, this_value)
+            return f
+
+        def do_binding(entry, f):
+            entry.unbind('<FocusOut>')
+            entry.unbind('<Return>')
+            entry.unbind('<Escape>')
+
+            entry.bind('<FocusOut>', f)
+            entry.bind('<Return>', f)
+            entry.bind('<Escape>', f)
+
+        do_binding(self.__entry_in, builder(
+            self.__entry_in_var, self.__head_in,
+            self.__entry_out_var, self.__head_out, 1
+        ))
+        do_binding(self.__entry_out, builder(
+            self.__entry_out_var, self.__head_out,
+            self.__entry_in_var, self.__head_in, -1
+        ))
 
 if __name__ == "__main__":
     # Short demo with two sliders - one with numbers 0.0-1.0, the other with timestamps 0:00 - 51:05
@@ -235,7 +331,7 @@ if __name__ == "__main__":
 
     timestamp_slider = RangeSlider(root, value_min=0, value_max=DEMO_MAXIMUM_TIME_IN_SECONDS)
     timestamp_slider.grid(row=1)
-    timestamp_slider.change_display(RangeSlider.timestamp_display_builder(DEMO_MAXIMUM_TIME_IN_SECONDS))
+    timestamp_slider.change_display(*RangeSlider.timestamp_display_builder(DEMO_MAXIMUM_TIME_IN_SECONDS))
 
     # Bind right-clicking on the window to return the values of 'in' and 'out'.
     # These are the primary outputs of this widget and what you would use in your code.
